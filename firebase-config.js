@@ -1,12 +1,12 @@
 /* ① Firebase 콘솔 → 프로젝트 설정(톱니바퀴) → 일반 → '내 앱' → 웹 앱의 SDK 설정 및 구성 → '구성'을 고르면 나오는 값을
       아래 firebaseConfig 안에 그대로 붙여 넣어요. (이 값은 공개돼도 괜찮은 값이에요. 보안은 Firestore 규칙이 지켜요.) */
 export const firebaseConfig = {
-  apiKey: "여기에-apiKey-붙여넣기",
-  authDomain: "내프로젝트.firebaseapp.com",
-  projectId: "내프로젝트",
-  storageBucket: "내프로젝트.firebasestorage.app",
-  messagingSenderId: "000000000000",
-  appId: "1:000000000000:web:0000000000000000"
+  apiKey: "AIzaSyC5iwcn_R24ef02AQ-dn7tS8v-ExazrxO4",,
+  authDomain: "ieum-f78c8.firebaseapp.com",
+  projectId: "ieum-f78c8",
+  storageBucket: "ieum-f78c8.firebasestorage.app",
+  messagingSenderId: "652613952322"
+  appId:"1:652613952322:web:feab03174e5d27c2929edb",
 };
 
 /* ② 쓸 Gemini 모델 (앞에서부터 써 보고, 없어진 모델이면 다음 것을 써요).
