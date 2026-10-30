@@ -7,7 +7,7 @@
    - assets : 쓰지 않아요 (파일 저장소는 유료 요금제가 필요해서, 지침은 글자만 저장해요) */
 import { firebaseConfig, AI_MODELS } from './firebase-config.js';
 
-const SDK = 'https://www.gstatic.com/firebasejs/12.5.0/';
+const SDK = 'https://www.gstatic.com/firebasejs/12.14.0/';
 const LSK = 'weave-v1';
 const ls = {
   get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
@@ -89,7 +89,7 @@ function classifyAi(e) {
 }
 function makeSample(F, app) {
   let ai;
-  try { ai = F.getAI(app, { backend: new F.GoogleAIBackend() }); } catch (e) { console.error('[WEAVE] AI를 준비하지 못했어요', e); return null; }
+  try { ai = F.getAI(app, { backend: new F.GoogleAIBackend(), useLimitedUseAppCheckTokens: true }); } catch (e) { console.error('[WEAVE] AI를 준비하지 못했어요', e); return null; }
   const models = Array.isArray(AI_MODELS) && AI_MODELS.length ? AI_MODELS : ['gemini-3.8-flash'];
   let mi = 0;
   const b64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(blob); });
