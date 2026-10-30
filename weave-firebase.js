@@ -160,7 +160,7 @@ function makeSample(F, app) {
 /* ---------- 시작 ---------- */
 async function loadFirebase() {
   if (window.__weaveFakeFirebase) return window.__weaveFakeFirebase;   // 시험용
-  const mods = await Promise.all(['firebase-app', 'firebase-auth', 'firebase-firestore', 'firebase-ai'].map(n => import(SDK + n + '.js')));
+  const mods = await Promise.all(['firebase-app', 'firebase-auth', 'firebase-firestore', 'firebase-ai', 'firebase-app-check'].map(n => import(SDK + n + '.js')));
   return Object.assign({}, ...mods);
 }
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -182,6 +182,11 @@ async function main() {
     return;
   }
   const app = F.initializeApp(firebaseConfig);
+  // Firebase App Check: AI·로그인·저장 기능을 사용하기 전에 초기화해요.
+  F.initializeAppCheck(app, {
+    provider: new F.ReCaptchaEnterpriseProvider('6LdcuwcuAAAAAA7SIQXGWaUWiensjhJ-PcdXOxoK'),
+    isTokenAutoRefreshEnabled: true
+  });
   const auth = F.getAuth(app);
   const fs = F.getFirestore(app);
   const sample = makeSample(F, app);
