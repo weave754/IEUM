@@ -1,11 +1,11 @@
 /* 이음 | 업무도우미 (WEAVE 팀) ↔ Firebase 연결
    앱(index.html)은 원래 Claude 아티팩트의 claude.use('sample'|'db'|'user'|'assets')를 썼어요.
-   이 파일은 같은 모양의 기능을 Firebase(로그인·Firestore)와 Gemini(Firebase AI Logic)로 만들어 줘요.
-   - sample : Gemini 호출 (무료 등급, 결제 수단 연결 안 함)
+   이 파일은 같은 모양의 기능을 Firebase(로그인·Firestore)와 BAZE 중계 서버로 만들어 줘요.
+   - sample : BAZE API 호출 (계정 크레딧 차감)
    - db     : Cloud Firestore
    - user   : Google 로그인 + 회사(관리자/직원) 정보
    - assets : 쓰지 않아요 (파일 저장소는 유료 요금제가 필요해서, 지침은 글자만 저장해요) */
-import { firebaseConfig, AI_MODELS } from './firebase-config.js';
+import { firebaseConfig } from './firebase-config.js';
 
 const SDK = 'https://www.gstatic.com/firebasejs/12.14.0/';
 const LSK = 'weave-v1';
@@ -87,80 +87,53 @@ function classifyAi(e) {
   if (/token|too large|exceeds/i.test(m) && /input|prompt|context/i.test(m)) return 'prompt_too_large';
   return 'unavailable';
 }
-function makeSample(F, app) {
-  let ai;
-  try { ai = F.getAI(app, { backend: new F.GoogleAIBackend(), useLimitedUseAppCheckTokens: true }); } catch (e) { console.error('[WEAVE] AI를 준비하지 못했어요', e); return null; }
-  const models = Array.isArray(AI_MODELS) && AI_MODELS.length ? AI_MODELS : ['gemini-3.8-flash'];
-  let mi = 0;
-  const b64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(blob); });
-  async function build(input, images) {
-    let system = null, turns;
-    if (typeof input === 'string') turns = [{ role: 'user', content: input }];
-    else {
-      turns = input.slice();
-      if (turns.length >= 2 && turns[0].role === 'user' && turns[1].role === 'user') { system = String(turns[0].content || ''); turns = turns.slice(1); }
-    }
-    const contents = [];
-    for (const t of turns) {
-      const role = t.role === 'assistant' ? 'model' : 'user', text = String(t.content || '');
-      const last = contents[contents.length - 1];
-      if (last && last.role === role) last.parts.push({ text }); else contents.push({ role, parts: [{ text }] });
-    }
-    if (images && images.length) {
-      const lastUser = [...contents].reverse().find(c => c.role === 'user');
-      for (const img of images) lastUser.parts.push({ inlineData: { mimeType: img.type || 'image/png', data: await b64(img) } });
-    }
-    return { system, contents };
+function makeSample(F, app, appCheck) {
+  const ENDPOINT = 'https://ieum-api.weave754.workers.dev/chat';
+  async function run(input, opts = {}, jsonMode = false) {
+    if (opts.images?.length) throw {code:'images_unavailable',message:'이 체험 버전은 사진 입력을 지원하지 않아요.'};
+    if (opts.signal?.aborted) throw {code:'cancelled'};
+    let turns = typeof input === 'string' ? [{role:'user',content:input}] : input.slice();
+    const messages = turns.map(t => ({role:t.role === 'assistant' ? 'assistant' : 'user',content:String(t.content || '')}));
+    if (messages.length >= 2 && messages[0].role === 'user' && messages[1].role === 'user') messages[0].role='system';
+    if (jsonMode) messages.unshift({role:'system',content:'Return only valid JSON. Follow the requested JSON schema. No Markdown fences.'});
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    opts.signal?.addEventListener('abort', cancel, {once:true});
+    const timer=setTimeout(cancel,90000);
+    try {
+      const {token}=await F.getToken(appCheck, false);
+      if(controller.signal.aborted) throw new Error('aborted');
+      const response=await fetch(ENDPOINT, {method:'POST',headers:{'Content-Type':'application/json','X-Firebase-AppCheck':token},body:JSON.stringify({messages}),signal:controller.signal});
+      const data=await response.json();
+      if(!response.ok) throw {code:data.code || 'unavailable',message:data.message || 'AI 요청에 실패했어요.'};
+      const text=String(data.text || '');
+      if(opts.onText && !jsonMode) opts.onText({text,delta:text});
+      return {text,truncated:!!data.truncated};
+    } catch(e) {
+      if(opts.signal?.aborted) throw {code:'cancelled'};
+      if(e.code) throw e;
+      console.error('[WEAVE] BAZE 연결 오류',e);
+      throw {code:'unavailable',message:'AI 연결에 실패했어요. 잠시 뒤 다시 시도해 주세요.'};
+    } finally {clearTimeout(timer);opts.signal?.removeEventListener('abort',cancel);}
   }
-  async function run(input, opts, json) {
-    opts = opts || {};
-    const { system, contents } = await build(input, opts.images);
-    for (let k = mi; k < models.length; k++) {
-      try {
-        const params = { model: models[k] };
-        if (system) params.systemInstruction = system;
-        if (json) params.generationConfig = { responseMimeType: 'application/json' };
-        const model = F.getGenerativeModel(ai, params);
-        if (opts.signal && opts.signal.aborted) throw { code: 'cancelled', message: '', text: '' };
-        if (opts.onText && !json) {
-          const r = await model.generateContentStream({ contents });
-          let text = '';
-          for await (const ch of r.stream) {
-            if (opts.signal && opts.signal.aborted) throw { code: 'cancelled', message: '', text };
-            let d = ''; try { d = ch.text(); } catch (e) {}
-            if (d) { text += d; opts.onText({ text, delta: d }); }
-          }
-          mi = k; return { text, truncated: false };
-        }
-        const r = await model.generateContent({ contents });
-        let text = ''; try { text = r.response.text(); } catch (e) { throw { code: 'refused', message: 'blocked' }; }
-        mi = k; return { text, truncated: false };
-      } catch (e) {
-        if (e && (e.code === 'cancelled' || e.code === 'refused')) throw e;
-        const c = classifyAi(e);
-        if (c === 'model_missing' && k < models.length - 1) { console.warn('[WEAVE] 모델을 바꿔요:', models[k], '→', models[k + 1]); continue; }
-        if (c === 'unavailable') console.error('[WEAVE] AI 호출 실패. Firebase 콘솔에서 AI Logic(Gemini Developer API)을 켰는지 확인해요.', e);
-        throw { code: c === 'model_missing' ? 'unavailable' : c, message: String((e && e.message) || e) };
-      }
-    }
-  }
-  const sample = (input, opts) => run(input, opts, false);
-  sample.json = async (input, opts) => {
-    const { text } = await run(input, Object.assign({}, opts, { onText: null }), true);
-    const t = String(text || '').replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '');
-    try { return JSON.parse(t); } catch (e) {
-      const m = t.match(/[\[{][\s\S]*[\]}]/); if (m) { try { return JSON.parse(m[0]); } catch (_) {} }
-      throw { code: 'invalid_json', message: 'JSON을 읽지 못했어요' };
+  const sample=(input,opts)=>run(input,opts,false);
+  sample.json=async(input,opts)=>{
+    const {text}=await run(input,opts,true);
+    const t=text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g,'');
+    try {return JSON.parse(t);} catch {
+      const m=t.match(/[\[{][\s\S]*[\]}]/);
+      if(m) {try{return JSON.parse(m[0]);}catch{}}
+      throw {code:'invalid_json',message:'JSON을 읽지 못했어요.'};
     }
   };
-  sample.limits = async () => ({ tools: false, images: true });
+  sample.limits=async()=>({tools:false,images:false});
   return sample;
 }
 
 /* ---------- 시작 ---------- */
 async function loadFirebase() {
   if (window.__weaveFakeFirebase) return window.__weaveFakeFirebase;   // 시험용
-  const mods = await Promise.all(['firebase-app', 'firebase-auth', 'firebase-firestore', 'firebase-ai', 'firebase-app-check'].map(n => import(SDK + n + '.js')));
+  const mods = await Promise.all(['firebase-app', 'firebase-auth', 'firebase-firestore', 'firebase-app-check'].map(n => import(SDK + n + '.js')));
   return Object.assign({}, ...mods);
 }
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -183,13 +156,13 @@ async function main() {
   }
   const app = F.initializeApp(firebaseConfig);
   // Firebase App Check: AI·로그인·저장 기능을 사용하기 전에 초기화해요.
-  F.initializeAppCheck(app, {
+  const appCheck = F.initializeAppCheck(app, {
     provider: new F.ReCaptchaEnterpriseProvider('6LdcuwcuAAAAAA7SIQXGWaUWiensjhJ-PcdXOxoK'),
     isTokenAutoRefreshEnabled: true
   });
   const auth = F.getAuth(app);
   const fs = F.getFirestore(app);
-  const sample = makeSample(F, app);
+  const sample = makeSample(F, app, appCheck);
   const db = makeDb(F, fs);
   try { await F.getRedirectResult(auth); } catch (e) {}
   const user = await new Promise(r => { const u = F.onAuthStateChanged(auth, x => { u(); r(x); }); });
